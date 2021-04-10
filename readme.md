@@ -5,7 +5,6 @@ This repo is a simple implementation of mutual TLS authentication in GRPC micros
 ## Requirements
 
 - [Protoc](https://grpc.io/docs/protoc-installation/)
-- [Vault](https://learn.hashicorp.com/vault/)
 
 ## Commands
 

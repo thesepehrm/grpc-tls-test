@@ -1,0 +1,5 @@
+go.sum
+*.pem
+*.srl
+*.secret
+vault/data/*

@@ -2,96 +2,75 @@ package main
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"net"
-	"net/url"
-	"os"
-	"time"
 
-	"github.com/johanbrandhorst/certify"
-	"github.com/johanbrandhorst/certify/issuers/vault"
 	"github.com/sirupsen/logrus"
 	"github.com/thesepehrm/grpc-tls-test/pb/greeter"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	logrusadapter "logur.dev/adapter/logrus"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 var (
 	logger = logrus.StandardLogger()
 )
 
-func getenv(name string) string {
-	v := os.Getenv(name)
-	if v == "" {
-		logger.Fatalf("%s env variable is not set", name)
-	}
-	return v
-}
+const (
+	clientCAFile   = "cert/ca-cert.pem"
+	serverKeyFile  = "cert/server-key.pem"
+	serverCertFile = "cert/server-cert.pem"
+)
 
-type RSA struct {
-	bits int
-}
-
-func (r RSA) Generate() (crypto.PrivateKey, error) {
-	return rsa.GenerateKey(rand.Reader, r.bits)
-}
-
-func vaultCert(f string) (credentials.TransportCredentials, error) {
-	b, err := ioutil.ReadFile(f)
+func loadTLSCredentials() (credentials.TransportCredentials, error) {
+	// Load certificate of the CA who signed client's certificate
+	pemClientCA, err := ioutil.ReadFile(clientCAFile)
 	if err != nil {
-		return nil, fmt.Errorf("vaultCert: problem with input file")
+		return nil, err
 	}
-	cp := x509.NewCertPool()
-	if !cp.AppendCertsFromPEM(b) {
-		return nil, fmt.Errorf("vaultCert: failed to append certificates")
+
+	certPool := x509.NewCertPool()
+	if !certPool.AppendCertsFromPEM(pemClientCA) {
+		return nil, fmt.Errorf("failed to add client CA's certificate")
 	}
-	issuer := &vault.Issuer{
-		URL: &url.URL{
-			Scheme: "https",
-			Host:   "localhost:8200",
-		},
-		TLSConfig: &tls.Config{
-			RootCAs: cp,
-		},
-		Token: getenv("TOKEN"),
-		Role:  "certissuer",
+
+	// Load server's certificate and private key
+	serverCert, err := tls.LoadX509KeyPair(serverCertFile, serverKeyFile)
+	if err != nil {
+		return nil, err
 	}
-	cfg := certify.CertConfig{
-		SubjectAlternativeNames: []string{"localhost"},
-		IPSubjectAlternativeNames: []net.IP{
-			net.ParseIP("127.0.0.1"),
-			net.ParseIP("::1"),
-		},
-		KeyGenerator: RSA{bits: 2048},
+
+	// Create the credentials and return it
+	config := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    certPool,
 	}
-	c := &certify.Certify{
-		CommonName:  "localhost",
-		Issuer:      issuer,
-		Cache:       certify.NewMemCache(),
-		CertConfig:  &cfg,
-		RenewBefore: 24 * time.Hour,
-		Logger:      logrusadapter.New(logger),
-	}
-	tlsConfig := &tls.Config{
-		GetCertificate: c.GetCertificate,
-	}
-	return credentials.NewTLS(tlsConfig), nil
+
+	return credentials.NewTLS(config), nil
 }
 
 type greeterServer struct {
 }
 
-func (s *greeterServer) Hello(context.Context, *greeter.HelloRequest) (*greeter.HelloResponse, error) {
+func (s *greeterServer) Hello(ctx context.Context, req *greeter.HelloRequest) (*greeter.HelloResponse, error) {
+
+	peer, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid authentication")
+	}
+
+	tlsInfo := peer.AuthInfo.(credentials.TLSInfo)
+	commonName := tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
+
 	return &greeter.HelloResponse{
-		Reply: "Hi!",
+		Reply: "Hi!, " + commonName,
 	}, nil
 }
 
@@ -106,19 +85,22 @@ func main() {
 
 	opts := []grpc.ServerOption{}
 
-	creds, err := vaultCert("cert/ca-cert.pem")
+	creds, err := loadTLSCredentials()
+
 	if err != nil {
 		logger.Fatal(err)
 	}
+
 	opts = append(opts, grpc.Creds(creds))
 
-	lis, err := net.Listen("tcp", "127.0.0.1:"+*port)
+	lis, err := net.Listen("tcp", ":"+*port)
 	if err != nil {
 		logger.Fatal(err)
 	}
 	defer lis.Close()
 
 	logger.Infof("Server is listening on port %s", *port)
+
 	s := grpc.NewServer(opts...)
 	logger.Infof("Starting gRPC services")
 

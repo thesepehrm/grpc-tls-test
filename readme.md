@@ -13,8 +13,8 @@ This repo is a simple implementation of mutual TLS authentication in GRPC micros
 - `make cert` to generate certificates for the client, the server and Vault
 - `make client` to run the client
 - `make server` to run the server
-- `vault-init` to initialize the vault
-- `run-vault` to run the vault server
+- `make vault-init` to initialize the vault
+- `make run-vault` to run the vault server
 
 
 ## Vault Setup

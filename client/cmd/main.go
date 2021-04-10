@@ -16,7 +16,7 @@ import (
 
 func loadTLSCredentials() (credentials.TransportCredentials, error) {
 	// Load certificate of the CA who signed server's certificate
-	pemServerCA, err := ioutil.ReadFile("ca-vault.cert")
+	pemServerCA, err := ioutil.ReadFile("cert/ca-cert.pem")
 	if err != nil {
 		return nil, err
 	}
